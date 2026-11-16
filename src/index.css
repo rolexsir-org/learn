@@ -1,0 +1,97 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: var(--color-amber-500);
+  --color-secondary: var(--color-orange-500);
+  --color-success: var(--color-emerald-500);
+  --color-danger: var(--color-rose-500);
+  --color-info: var(--color-sky-500);
+
+  --shadow-soft-3d: 0 8px 20px -6px rgba(0, 0, 0, 0.15), 0 4px 10px -2px rgba(0, 0, 0, 0.1);
+  --shadow-soft-3d-lg: 0 20px 40px -10px rgba(0, 0, 0, 0.2), 0 10px 20px -5px rgba(0, 0, 0, 0.1);
+  --shadow-inner-soft: inset 0 2px 4px 0 rgba(255, 255, 255, 0.4);
+}
+
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    outline-color: var(--color-amber-400);
+  }
+
+  html, body {
+    touch-action: manipulation;
+    overscroll-behavior-y: none;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    background-color: #FFFBEB; /* amber-50 */
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-black tracking-tight;
+  }
+}
+
+@layer utilities {
+  .gpu-accelerated {
+    transform: translateZ(0);
+    will-change: transform;
+    backface-visibility: hidden;
+  }
+
+  /* Soft 3D "Touchable" Effect */
+  .soft-3d {
+    @apply shadow-soft-3d border-b-4 active:border-b-0 active:translate-y-[2px] transition-all duration-75;
+  }
+
+  .soft-3d-lg {
+    @apply shadow-soft-3d-lg border-b-6 active:border-b-0 active:translate-y-[4px] transition-all duration-75;
+  }
+
+  .inner-shadow-subtle {
+    box-shadow: inset 0 2px 4px 0 rgba(0, 0, 0, 0.05);
+  }
+
+  .text-glow {
+    text-shadow: 0 0 15px rgba(251, 191, 36, 0.4);
+  }
+
+  .animate-float {
+    animation: floating 3s ease-in-out infinite;
+  }
+
+  @keyframes floating {
+    0% { transform: translateY(0px); }
+    50% { transform: translateY(-10px); }
+    100% { transform: translateY(0px); }
+  }
+
+  .animate-bounce-subtle {
+    animation: bounce-subtle 2s ease-in-out infinite;
+  }
+
+  @keyframes bounce-subtle {
+    0%, 100% { transform: translateY(0) scale(1); }
+    50% { transform: translateY(-5px) scale(1.02); }
+  }
+}
+
+/* Custom Scrollbar for Children - Friendly & Clean */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #FEF3C7; /* amber-100 */
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #FDE68A; /* amber-200 */
+}

@@ -1,0 +1,7 @@
+{
+  "name": "English Explorer: Kids Phonics & Words Game",
+  "description": "Interactive vocabulary and phonics learning app for children aged 3-8, featuring animated word engines, gamified mascot companions, and progress tracking.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+}

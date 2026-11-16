@@ -1,0 +1,55 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "Stores kid's learning progress, achievements, settings, and checkpoint game state.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "displayName": { "type": "string" },
+        "totalStars": { "type": "integer" },
+        "coins": { "type": "integer" },
+        "currentStreak": { "type": "integer" },
+        "maxStreak": { "type": "integer" },
+        "timeSpent": { "type": "integer" },
+        "lastLoginDate": { "type": "string", "format": "date-time" },
+        "unlockedCharacters": { "type": "array", "items": { "type": "string" } },
+        "claimedQuests": { "type": "array", "items": { "type": "string" } },
+        "unlockedStickers": { "type": "array", "items": { "type": "string" } },
+        "unlockedAvatars": { "type": "array", "items": { "type": "string" } },
+        "unlockedWorlds": { "type": "array", "items": { "type": "string" } },
+        "completedLessons": { "type": "array", "items": { "type": "string" } },
+        "lastRewardClaimed": { "type": "string", "format": "date-time" },
+        "currentWorldId": { "type": "string" },
+        "activeWordIndex": { "type": "integer" },
+        "activeNavTab": { "type": "string" },
+        "soundEnabled": { "type": "boolean" }
+      },
+      "required": ["userId", "totalStars", "coins", "currentStreak"]
+    },
+    "WordProgress": {
+      "title": "Word Progress",
+      "description": "Tracks accuracy and mastery of specific words.",
+      "type": "object",
+      "properties": {
+        "word": { "type": "string" },
+        "accuracy": { "type": "number" },
+        "speedMs": { "type": "number" },
+        "attempts": { "type": "integer" },
+        "isMastered": { "type": "boolean" },
+        "lastPracticed": { "type": "string", "format": "date-time" }
+      },
+      "required": ["word", "accuracy", "attempts", "isMastered"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Primary user profile document."
+    },
+    "/users/{userId}/progress/{wordId}": {
+      "schema": "WordProgress",
+      "description": "Detailed progress records for each word."
+    }
+  }
+}
