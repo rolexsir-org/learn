@@ -1,18 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Trophy, Flame, Star, Sparkles, Crown, Medal, Heart, ShieldCheck, RefreshCw, Zap, Users, ChevronUp } from 'lucide-react';
-import { db, auth } from '../lib/firebase';
-import { collection, query, orderBy, limit, getDocs } from 'firebase/firestore';
+import { Flame, Star, RefreshCw, ChevronUp } from 'lucide-react';
 import { soundFx } from '../utils/audio';
 import { ExplorerCard, IconBadge, ExplorerButton } from './UiCore';
 import { cn } from '../lib/utils';
 
 interface LeaderboardProps {
   userStars: number;
-  userCoins: number;
   userStreak: number;
-  soundEnabled: boolean;
-  currentUserId?: string;
 }
 
 interface Learner {
@@ -38,73 +33,33 @@ const BENCHMARK_LEARNERS: Omit<Learner, 'isCurrentUser'>[] = [
 
 export const Leaderboard: React.FC<LeaderboardProps> = ({
   userStars,
-  userCoins,
-  userStreak,
-  currentUserId
+  userStreak
 }) => {
-  const [timeframe, setTimeframe] = useState<'weekly' | 'alltime'>('weekly');
   const [learners, setLearners] = useState<Learner[]>([]);
   const [loading, setLoading] = useState(true);
   const [cheeredIds, setCheeredIds] = useState<Record<string, number>>({});
 
-  const fetchLeaderboard = async () => {
-    setLoading(true);
-    let realUsers: Learner[] = [];
-
-    try {
-      const q = query(collection(db, 'users'), orderBy('totalStars', 'desc'), limit(15));
-      const querySnap = await getDocs(q);
-      
-      querySnap.forEach((docSnap) => {
-        const data = docSnap.data();
-        const uid = docSnap.id;
-        const isMe = uid === currentUserId || (auth.currentUser && uid === auth.currentUser.uid);
-        
-        realUsers.push({
-          id: uid,
-          name: data.displayName || (isMe ? 'You (Super Learner)' : `Explorer ${uid.substring(0, 4)}`),
-          stars: data.totalStars || 0,
-          streak: data.currentStreak || 1,
-          avatar: isMe ? '🌟' : ['🦊', '🦁', '🐼', '🐯', '🐰'][Math.abs(uid.charCodeAt(0) || 0) % 5],
-          league: data.totalStars > 100 ? 'Diamond' : data.totalStars > 50 ? 'Gold' : 'Silver',
-          isCurrentUser: Boolean(isMe),
-          highFives: Math.floor((data.totalStars || 10) / 3)
-        });
-      });
-    } catch (err) {}
-
-    const activeUid = currentUserId || auth.currentUser?.uid || 'local-me';
-    const myIndex = realUsers.findIndex(u => u.isCurrentUser || u.id === activeUid);
-
-    if (myIndex >= 0) {
-      realUsers[myIndex].stars = Math.max(realUsers[myIndex].stars, userStars);
-      realUsers[myIndex].streak = Math.max(realUsers[myIndex].streak, userStreak);
-    } else {
-      realUsers.push({
-        id: activeUid,
-        name: 'You (Super Learner) ⭐',
-        stars: userStars,
-        streak: userStreak,
-        avatar: '🌟',
-        league: userStars > 100 ? 'Diamond' : userStars > 50 ? 'Gold' : 'Silver',
-        isCurrentUser: true,
-        highFives: Math.floor(userStars / 2) + 5
-      });
-    }
-
-    const combined = [...realUsers];
-    BENCHMARK_LEARNERS.forEach(bm => {
-      if (!combined.some(c => c.name === bm.name)) {
-        combined.push({ ...bm, isCurrentUser: false });
-      }
-    });
-
-    combined.sort((a, b) => b.stars - a.stars);
-    setLearners(combined.slice(0, 10));
+  // This screen is intentionally a local practice board. Do not query other
+  // children's profiles; the sample characters below are not real accounts.
+  useEffect(() => {
+    const me: Learner = {
+      id: 'local-me',
+      name: 'You, Super Learner ⭐',
+      stars: userStars,
+      streak: userStreak,
+      avatar: '🌟',
+      league: userStars > 100 ? 'Diamond' : userStars > 50 ? 'Gold' : 'Silver',
+      isCurrentUser: true,
+      highFives: Math.floor(userStars / 2) + 5
+    };
+    const practiceBoard = [me, ...BENCHMARK_LEARNERS.map((learner) => ({
+      ...learner,
+      isCurrentUser: false
+    }))];
+    practiceBoard.sort((a, b) => b.stars - a.stars);
+    setLearners(practiceBoard.slice(0, 10));
     setLoading(false);
-  };
-
-  useEffect(() => { fetchLeaderboard(); }, [userStars, userStreak, timeframe, currentUserId]);
+  }, [userStars, userStreak]);
 
   const handleHighFive = (id: string) => {
     soundFx.playChime();
@@ -125,27 +80,17 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({
             <div className="text-center md:text-left">
               <div className="flex items-center gap-2 justify-center md:justify-start mb-1">
                 <span className="text-[10px] font-black bg-amber-950 text-amber-300 px-2.5 py-0.5 rounded-full uppercase tracking-wider shadow-sm">
-                  Diamond League 💎
+                  Private practice board
                 </span>
               </div>
-              <h2 className="text-3xl font-black tracking-tight">Weekly Star Champions</h2>
+              <h2 className="text-3xl font-black tracking-tight">Celebrate your progress</h2>
+              <p className="mt-1 text-sm font-semibold text-amber-950/75">Sample characters only — your learning data stays private.</p>
             </div>
           </div>
 
-          <div className="flex bg-amber-950/20 p-1.5 rounded-2xl border border-amber-500/40 backdrop-blur-sm">
-            <button
-              onClick={() => { soundFx.playPop(); setTimeframe('weekly'); }}
-              className={cn("px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all", timeframe === 'weekly' ? "bg-white text-amber-950 shadow-md" : "text-amber-900 hover:bg-white/10")}
-            >
-              This Week
-            </button>
-            <button
-              onClick={() => { soundFx.playPop(); setTimeframe('alltime'); }}
-              className={cn("px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all", timeframe === 'alltime' ? "bg-white text-amber-950 shadow-md" : "text-amber-900 hover:bg-white/10")}
-            >
-              Legends
-            </button>
-          </div>
+          <span className="rounded-full border border-amber-900/20 bg-white/40 px-4 py-2 text-xs font-bold text-amber-950">
+            Just for fun
+          </span>
         </div>
       </ExplorerCard>
 

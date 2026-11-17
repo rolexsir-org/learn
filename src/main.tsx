@@ -9,6 +9,8 @@ import { App as CapacitorApp } from '@capacitor/app';
 import { storageService } from './services/StorageService.ts';
 import { playIntegrityService } from './services/PlayIntegrityService.ts';
 import { notificationReminderService } from './services/NotificationReminderService.ts';
+import { AudioManager } from './services/AudioManager.ts';
+import { SpeechService } from './services/SpeechService.ts';
 
 // Production log suppression for Google Play compliance
 if ((import.meta as unknown as { env?: { PROD?: boolean } }).env?.PROD) {
@@ -40,6 +42,8 @@ if (Capacitor.isNativePlatform()) {
 
       // Reschedule daily phonics reminder when app enters foreground
       CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+        if (!isActive) SpeechService.stop();
+        AudioManager.setAppActive(isActive);
         if (isActive) {
           notificationReminderService.scheduleDailyPhonicsReminder().catch(() => {});
         }

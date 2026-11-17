@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, ReactNode, useCallback } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { NotificationToast, NotificationType } from '../components/NotificationToast';
+import { AudioManager } from '../services/AudioManager';
 
 interface Notification {
   id: string;
@@ -18,6 +19,7 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
   const [notifications, setNotifications] = useState<Notification[]>([]);
 
   const showNotification = useCallback((message: string, type: NotificationType = 'success') => {
+    AudioManager.playEffect('notification');
     const id = Math.random().toString(36).substring(2, 9);
     setNotifications((prev) => [...prev, { id, message, type }]);
 

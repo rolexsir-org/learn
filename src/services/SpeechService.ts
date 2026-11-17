@@ -1,10 +1,4 @@
-/**
- * SpeechService - Native Text-to-Speech & Speech Recognition Abstraction
- * 
- * Replaces direct calls to window.speechSynthesis, SpeechSynthesisUtterance,
- * and web SpeechRecognition with a platform abstraction for Android, iOS,
- * and cross-platform mobile runtimes.
- */
+import { AudioManager } from './AudioManager';
 
 export interface SpeechOptions {
   rate?: number;
@@ -12,7 +6,7 @@ export interface SpeechOptions {
   lang?: string;
   onStart?: () => void;
   onEnd?: () => void;
-  onError?: (err: any) => void;
+  onError?: (err: unknown) => void;
 }
 
 export interface SpeechRecognitionOptions {
@@ -20,241 +14,181 @@ export interface SpeechRecognitionOptions {
   interimResults?: boolean;
   onStart?: () => void;
   onResult?: (transcript: string, isFinal: boolean) => void;
-  onError?: (err: any) => void;
+  onError?: (err: unknown) => void;
   onEnd?: () => void;
+}
+
+export interface AvailableSpeechVoice {
+  voiceURI: string;
+  name: string;
+  lang: string;
+  localService: boolean;
 }
 
 class MobileSpeechService {
   private activeRecognition: any = null;
-  private cachedVoices: SpeechSynthesisVoice[] = [];
-  private preferredVoice: SpeechSynthesisVoice | null = null;
-  private audioCtx: AudioContext | null = null;
+  private voices: SpeechSynthesisVoice[] = [];
+  private voiceListeners = new Set<(voices: AvailableSpeechVoice[]) => void>();
+  private activeUtterance: SpeechSynthesisUtterance | null = null;
+  private activeStopCallback: (() => void) | null = null;
 
   constructor() {
-    this.initVoiceEngine();
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    this.loadVoices();
+    window.speechSynthesis.addEventListener?.('voiceschanged', () => this.loadVoices());
   }
 
-  private initVoiceEngine() {
-    if (typeof window === 'undefined') return;
-
-    if ('speechSynthesis' in window) {
-      this.loadVoices();
-      if (typeof window.speechSynthesis.onvoiceschanged !== 'undefined') {
-        window.speechSynthesis.onvoiceschanged = () => this.loadVoices();
-      }
-    }
-  }
-
-  private loadVoices() {
+  private loadVoices(): void {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
     try {
-      const voices = window.speechSynthesis.getVoices();
-      if (!voices || voices.length === 0) return;
-
-      this.cachedVoices = voices;
-
-      // Select local offline high-quality English voice
-      const englishVoices = voices.filter(v => v.lang.startsWith('en'));
-      
-      // Prefer local offline voices first for zero-network execution
-      const localVoice = englishVoices.find(v => v.localService === true && (
-        v.name.includes('Samantha') ||
-        v.name.includes('Google') ||
-        v.name.includes('Karen') ||
-        v.name.includes('Daniel') ||
-        v.name.includes('Natural')
-      )) || englishVoices.find(v => v.localService === true) || englishVoices[0] || voices[0];
-
-      this.preferredVoice = localVoice || null;
-    } catch (e) {
-      console.warn('SpeechService: Error loading voices:', e);
-    }
+      this.voices = window.speechSynthesis.getVoices();
+      const options = this.getAvailableVoices();
+      this.voiceListeners.forEach((listener) => listener(options));
+    } catch { this.voices = []; }
   }
 
-  /**
-   * Speaks text using native offline TTS voice synthesis with Web Audio formant fallback.
-   */
-  public speak(text: string, options: SpeechOptions = {}): void {
-    if (!text || typeof text !== 'string') return;
+  refreshVoices(): AvailableSpeechVoice[] {
+    this.loadVoices();
+    return this.getAvailableVoices();
+  }
 
-    // Clean emojis & special Unicode symbols for crisp pronunciation
-    const cleanText = text.replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '').trim();
-    if (!cleanText) return;
+  /** Only expose exact US/GB English engines; no unsupported accent is implied. */
+  getAvailableVoices(): AvailableSpeechVoice[] {
+    return this.voices
+      .filter((voice) => /^(en-US|en-GB)$/i.test(voice.lang))
+      .map((voice) => ({ voiceURI: voice.voiceURI, name: voice.name, lang: voice.lang, localService: voice.localService }));
+  }
+
+  subscribeVoices(listener: (voices: AvailableSpeechVoice[]) => void): () => void {
+    this.voiceListeners.add(listener);
+    listener(this.getAvailableVoices());
+    return () => this.voiceListeners.delete(listener);
+  }
+
+  speak(text: string, options: SpeechOptions = {}): void {
+    const cleanText = typeof text === 'string'
+      ? text.replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '').trim()
+      : '';
+    if (!cleanText || typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      options.onError?.(new Error('Text-to-speech is not available on this device.'));
+      return;
+    }
+    if (AudioManager.isMuted() || AudioManager.getVoiceVolume() <= 0) return;
 
     this.stop();
-
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      try {
-        const utterance = new SpeechSynthesisUtterance(cleanText);
-        utterance.rate = options.rate ?? 0.85; // Kid-friendly articulated pace
-        utterance.pitch = options.pitch ?? 1.15; // Friendly mascot pitch
-        utterance.lang = options.lang ?? 'en-US';
-
-        if (this.preferredVoice) {
-          utterance.voice = this.preferredVoice;
-        }
-
-        if (options.onStart) utterance.onstart = options.onStart;
-        if (options.onEnd) utterance.onend = options.onEnd;
-        if (options.onError) {
-          utterance.onerror = (err) => {
-            // Fall back to offline formant synth if TTS fails
-            this.speakOfflineFormant(cleanText, options);
-            if (options.onError) options.onError(err);
-          };
-        }
-
-        window.speechSynthesis.speak(utterance);
-      } catch (e) {
-        this.speakOfflineFormant(cleanText, options);
-      }
-    } else {
-      this.speakOfflineFormant(cleanText, options);
-    }
-  }
-
-  /**
-   * Offline Web Audio Formant Synthesizer for phonics voice feedback when TTS is uninitialized.
-   */
-  private speakOfflineFormant(text: string, options: SpeechOptions = {}): void {
-    if (options.onStart) options.onStart();
-
+    const prefs = AudioManager.getPreferences();
     try {
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioCtx) {
-        if (options.onEnd) setTimeout(options.onEnd, 500);
-        return;
+      const utterance = new SpeechSynthesisUtterance(cleanText);
+      utterance.rate = options.rate ?? prefs.speechRate;
+      utterance.pitch = options.pitch ?? 1;
+      const selectedVoice = prefs.voiceURI ? this.voices.find((voice) => voice.voiceURI === prefs.voiceURI) : undefined;
+      const exactLocaleVoice = prefs.voiceLocale === 'device' ? undefined : this.voices.find((voice) => voice.lang.toLowerCase() === prefs.voiceLocale.toLowerCase());
+      const voice = selectedVoice || exactLocaleVoice;
+      if (voice) {
+        utterance.voice = voice;
+        utterance.lang = voice.lang;
+      } else if (prefs.voiceLocale !== 'device') {
+        // Keep the requested locale truthful; browser/OS may choose its own fallback voice.
+        utterance.lang = prefs.voiceLocale;
+      } else {
+        const systemVoice = this.voices.find((candidate) => /^en-/i.test(candidate.lang));
+        if (systemVoice) {
+          utterance.voice = systemVoice;
+          utterance.lang = systemVoice.lang;
+        }
       }
-
-      if (!this.audioCtx) {
-        this.audioCtx = new AudioCtx();
-      }
-
-      if (this.audioCtx.state === 'suspended') {
-        this.audioCtx.resume();
-      }
-
-      const ctx = this.audioCtx;
-      const now = ctx.currentTime;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(220, now); // Base formant frequency
-
-      // Frequency bend for word articulation
-      osc.frequency.exponentialRampToValueAtTime(330, now + 0.15);
-      osc.frequency.exponentialRampToValueAtTime(260, now + 0.35);
-
-      gain.gain.setValueAtTime(0.2, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
-
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-
-      osc.start(now);
-      osc.stop(now + 0.4);
-
-      if (options.onEnd) {
-        setTimeout(options.onEnd, 450);
-      }
-    } catch (e) {
-      if (options.onEnd) setTimeout(options.onEnd, 300);
+      utterance.volume = AudioManager.getVoiceVolume();
+      utterance.onstart = () => { AudioManager.beginVoice(); options.onStart?.(); };
+      utterance.onend = () => {
+        if (this.activeUtterance !== utterance) return;
+        this.activeUtterance = null;
+        this.activeStopCallback = null;
+        AudioManager.endVoice();
+        options.onEnd?.();
+      };
+      utterance.onerror = (event) => {
+        if (this.activeUtterance !== utterance) return;
+        this.activeUtterance = null;
+        this.activeStopCallback = null;
+        AudioManager.endVoice();
+        options.onError?.(event);
+      };
+      this.activeUtterance = utterance;
+      this.activeStopCallback = options.onEnd || null;
+      window.speechSynthesis.speak(utterance);
+    } catch (error) {
+      AudioManager.endVoice();
+      options.onError?.(error);
     }
   }
 
-  /**
-   * Stops active speech.
-   */
-  public stop(): void {
+  pause(): void {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.pause();
+  }
+
+  resume(): void {
+    if (AudioManager.isMuted()) return;
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.resume();
+  }
+
+  stop(): void {
+    const hadUtterance = this.activeUtterance !== null;
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      try {
-        window.speechSynthesis.cancel();
-      } catch (e) {}
+      try { window.speechSynthesis.cancel(); } catch { /* unsupported platform */ }
     }
+    this.activeUtterance = null;
+    const callback = this.activeStopCallback;
+    this.activeStopCallback = null;
+    AudioManager.endVoice();
+    if (hadUtterance) callback?.();
   }
 
-  /**
-   * Checks if speech synthesis is supported.
-   */
-  public isAvailable(): boolean {
+  isAvailable(): boolean {
     return typeof window !== 'undefined' && 'speechSynthesis' in window;
   }
 
-  /**
-   * Native Speech Recognition abstraction.
-   */
-  public listen(options: SpeechRecognitionOptions): { stop: () => void } {
+  listen(options: SpeechRecognitionOptions): { stop: () => void } {
     this.stopRecognition();
-
     if (typeof window === 'undefined') {
-      if (options.onError) options.onError('Speech recognition not available on server environment');
-      return { stop: () => {} };
+      options.onError?.(new Error('Speech recognition is not available in this environment.'));
+      return { stop: () => undefined };
     }
-
-    const SpeechRecognition =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-
-    if (!SpeechRecognition) {
-      if (options.onStart) options.onStart();
-      if (options.onResult) {
-        setTimeout(() => options.onResult?.('Spelling Example', true), 800);
-      }
-      return { stop: () => {} };
+    const RecognitionConstructor = (window as typeof window & { SpeechRecognition?: new () => any; webkitSpeechRecognition?: new () => any }).SpeechRecognition
+      || (window as typeof window & { webkitSpeechRecognition?: new () => any }).webkitSpeechRecognition;
+    if (!RecognitionConstructor) {
+      options.onError?.(new Error('Speech recognition is not supported by this browser.'));
+      return { stop: () => undefined };
     }
-
     try {
-      const recognition = new SpeechRecognition();
+      const recognition = new RecognitionConstructor();
       this.activeRecognition = recognition;
-
       recognition.lang = options.lang || 'en-US';
       recognition.interimResults = options.interimResults ?? true;
       recognition.maxAlternatives = 1;
-
-      recognition.onstart = () => {
-        if (options.onStart) options.onStart();
-      };
-
+      recognition.onstart = () => options.onStart?.();
       recognition.onresult = (event: any) => {
-        const results = event?.results;
-        if (!results || !results.length) return;
-
-        const transcript = Array.from(results)
-          .map((res: any) => (res && res[0] ? res[0].transcript : ''))
-          .join(' ');
-
-        const isFinal = Boolean(results[0] && results[0].isFinal);
-        if (options.onResult) {
-          options.onResult(transcript, isFinal);
-        }
+        const results = Array.from(event.results as ArrayLike<{ isFinal: boolean; 0?: { transcript?: string } }>);
+        const transcript = results.map((result) => result[0]?.transcript || '').join(' ');
+        const isFinal = results.some((result) => result.isFinal);
+        options.onResult?.(transcript, isFinal);
       };
-
-      recognition.onerror = (err: any) => {
-        if (options.onError) options.onError(err);
-      };
-
+      recognition.onerror = (event: unknown) => options.onError?.(event);
       recognition.onend = () => {
-        if (options.onEnd) options.onEnd();
+        if (this.activeRecognition === recognition) this.activeRecognition = null;
+        options.onEnd?.();
       };
-
       recognition.start();
-
-      return {
-        stop: () => this.stopRecognition()
-      };
-    } catch (e) {
-      if (options.onError) options.onError(e);
-      return { stop: () => {} };
+      return { stop: () => this.stopRecognition() };
+    } catch (error) {
+      options.onError?.(error);
+      return { stop: () => undefined };
     }
   }
 
-  public stopRecognition(): void {
-    if (this.activeRecognition) {
-      try {
-        this.activeRecognition.stop();
-      } catch (e) {}
-      this.activeRecognition = null;
-    }
+  stopRecognition(): void {
+    if (!this.activeRecognition) return;
+    try { this.activeRecognition.stop(); } catch { /* recognizer may already have stopped */ }
+    this.activeRecognition = null;
   }
 }
 
