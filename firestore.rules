@@ -56,8 +56,11 @@ service cloud.firestore {
     // --- Collection Rules ---
 
     match /users/{userId} {
-      // Rule: Signed-in users can view profile stats for the Leaderboard
-      allow get, list: if isSignedIn();
+      // Child profiles contain private learning and reward data. No collection
+      // browsing or cross-account reads are permitted; public leaderboard data
+      // must live in a separately designed, privacy-reviewed aggregate.
+      allow get: if isOwner(userId);
+      allow list: if isOwner(userId);
 
       allow create: if isOwner(userId) && isValidUserProfile(incoming());
       

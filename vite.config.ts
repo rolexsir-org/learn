@@ -15,7 +15,25 @@ export default defineConfig(({mode}) => {
         '@': path.resolve(__dirname, '.'),
       },
     },
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('/node_modules/@firebase/')) {
+              return 'firebase-vendor';
+            }
+            if (id.includes('/node_modules/framer-motion/') || id.includes('/node_modules/motion/')) {
+              return 'animation-vendor';
+            }
+            if (id.includes('/node_modules/react/') || id.includes('/node_modules/react-dom/') || id.includes('/node_modules/scheduler/')) {
+              return 'react-vendor';
+            }
+          },
+        },
+      },
+    },
     server: {
+      allowedHosts: ['.e2b.app'],
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',

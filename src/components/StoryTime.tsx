@@ -1,7 +1,12 @@
+import React, { useEffect, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { CheckCircle2, ChevronLeft, ChevronRight, HelpCircle, Sparkles, Star, Volume2, Wand2 } from 'lucide-react';
+import { GeneratedStory, generateStoryFromWords } from '../lib/gemini';
 import { useMascot } from '../context/MascotContext';
 import { soundFx } from '../utils/audio';
 import { fireWordCompleteConfetti, fireTreasureChestConfetti } from '../utils/confetti';
 import { SpeechService } from '../services/SpeechService';
+import { AudioManager } from '../services/AudioManager';
 import { ExplorerButton, ExplorerCard, IconBadge } from './UiCore';
 
 interface StoryTimeProps {
@@ -12,6 +17,7 @@ interface StoryTimeProps {
 
 export const StoryTime: React.FC<StoryTimeProps> = ({
   completedWords,
+  soundEnabled,
   onRewardStars
 }) => {
   const { mascotName, mascotEmoji, showThoughtBubble } = useMascot();
@@ -22,6 +28,7 @@ export const StoryTime: React.FC<StoryTimeProps> = ({
   const [currentPage, setCurrentPage] = useState(0);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isNarrating, setIsNarrating] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
   const [isAnswerCorrect, setIsAnswerCorrect] = useState<boolean | null>(null);
   const [questionAnswered, setQuestionAnswered] = useState(false);
@@ -59,22 +66,27 @@ export const StoryTime: React.FC<StoryTimeProps> = ({
 
   const speakText = (text: string, onEndCallback?: () => void) => {
     SpeechService.speak(text, {
-      rate: 0.82,
-      pitch: 1.1,
-      onStart: () => setIsNarrating(true),
+      pitch: 1.05,
+      onStart: () => { setIsNarrating(true); setIsPaused(false); },
       onEnd: () => {
         setIsNarrating(false);
+        setIsPaused(false);
         if (onEndCallback) onEndCallback();
       },
-      onError: () => setIsNarrating(false)
+      onError: () => { setIsNarrating(false); setIsPaused(false); }
     });
   };
 
   const handleNarrateCurrentPage = () => {
     if (!story) return;
-    if (isNarrating) {
-      SpeechService.stop();
-      setIsNarrating(false);
+    if (isNarrating && !isPaused) {
+      SpeechService.pause();
+      setIsPaused(true);
+      return;
+    }
+    if (isNarrating && isPaused) {
+      SpeechService.resume();
+      setIsPaused(false);
       return;
     }
 
@@ -86,6 +98,7 @@ export const StoryTime: React.FC<StoryTimeProps> = ({
     if (!story) return;
     SpeechService.stop();
     setIsNarrating(false);
+    setIsPaused(false);
 
     if (currentPage < story.pages.length - 1) {
       setCurrentPage((prev) => prev + 1);
@@ -97,6 +110,7 @@ export const StoryTime: React.FC<StoryTimeProps> = ({
     if (!story) return;
     SpeechService.stop();
     setIsNarrating(false);
+    setIsPaused(false);
 
     if (currentPage > 0) {
       setCurrentPage((prev) => prev - 1);
@@ -116,6 +130,7 @@ export const StoryTime: React.FC<StoryTimeProps> = ({
     if (correct) {
       fireTreasureChestConfetti();
       soundFx.playSuccessFanfare();
+      AudioManager.playCelebration();
       showThoughtBubble(`Hooray! You answered correctly! You earned +10 Stars! 🌟`, 'proud');
       if (onRewardStars) onRewardStars(10);
     } else {
@@ -240,7 +255,7 @@ export const StoryTime: React.FC<StoryTimeProps> = ({
               }`}
             >
               <Volume2 className={`w-4 h-4 ${isNarrating ? 'text-white' : 'text-amber-600'}`} />
-              <span>{isNarrating ? 'Pause Reading' : 'Narrate Page'}</span>
+              <span>{isNarrating ? (isPaused ? 'Resume Reading' : 'Pause Reading') : 'Narrate Page'}</span>
             </button>
           </div>
 
@@ -311,8 +326,9 @@ export const StoryTime: React.FC<StoryTimeProps> = ({
                   key={pIdx}
                   onClick={() => {
                     setCurrentPage(pIdx);
-                    window.speechSynthesis?.cancel();
+                    SpeechService.stop();
                     setIsNarrating(false);
+                    setIsPaused(false);
                   }}
                   className={`w-3 h-3 rounded-full transition-all cursor-pointer ${
                     pIdx === currentPage

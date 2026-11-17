@@ -6,7 +6,9 @@ import { getWordMeaningSimple } from '../lib/gemini';
 import { fireWordCompleteConfetti } from '../utils/confetti';
 import { soundFx } from '../utils/audio';
 import { SpeechService } from '../services/SpeechService';
+import { AudioManager } from '../services/AudioManager';
 import { ExplorerButton, ExplorerCard, ProgressPill } from './UiCore';
+import { cn } from '../lib/utils';
 
 interface WordGameProps {
   onComplete: (wordId: string, accuracy: number, speed: number) => void;
@@ -132,7 +134,7 @@ export default function WordGame({
   };
 
   const speak = (text: string) => {
-    SpeechService.speak(text, { rate: 0.85, pitch: 1.1 });
+    SpeechService.speak(text, { pitch: 1.05 });
   };
 
   const handleSuccess = async () => {
@@ -153,7 +155,7 @@ export default function WordGame({
 
     const randomQuote = MOTIVATIONAL_QUOTES[Math.floor(Math.random() * MOTIVATIONAL_QUOTES.length)];
     setEncouragement(randomQuote);
-    speak(currentWord.text);
+    SpeechService.speak(currentWord.text, { pitch: 1.05, onEnd: () => AudioManager.playCelebration() });
 
     const timeSpent = Math.round((Date.now() - startTime) / 1000);
     onComplete(currentWord.id, 100, timeSpent);

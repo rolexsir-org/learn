@@ -1,26 +1,27 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { BookOpen, Volume2, VolumeX, ShieldCheck, Compass, Zap, Palette, Trophy } from 'lucide-react';
-import WordGame from './components/WordGame';
-import MyWordsList from './components/MyWordsList';
-import CharacterCollection from './components/CharacterCollection';
-import ParentDashboard from './components/ParentDashboard';
-import InteractiveBackground from './components/InteractiveBackground';
-import WorldSelector from './components/WorldSelector';
-import AdventureMap from './components/AdventureMap';
-import StickerAlbum from './components/StickerAlbum';
-import DailyQuests from './components/DailyQuests';
+import React, { lazy, Suspense, useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
+import { Volume2, VolumeX, ShieldCheck } from 'lucide-react';
+import { MainNavigation, type LearningTab } from './components/MainNavigation';
+import { LearningHome } from './components/LearningHome';
+const WordGame = lazy(() => import('./components/WordGame'));
+const CharacterCollection = lazy(() => import('./components/CharacterCollection'));
+const ParentDashboard = lazy(() => import('./components/ParentDashboard'));
+const WorldSelector = lazy(() => import('./components/WorldSelector'));
+const AdventureMap = lazy(() => import('./components/AdventureMap'));
+const StickerAlbum = lazy(() => import('./components/StickerAlbum'));
+const DailyQuests = lazy(() => import('./components/DailyQuests'));
 import FloatingMascot from './components/FloatingMascot';
 import AmbientEnvironment from './components/AmbientEnvironment';
-import StoryTime from './components/StoryTime';
-import ColoringCanvas from './components/ColoringCanvas';
-import { Leaderboard } from './components/Leaderboard';
+const StoryTime = lazy(() => import('./components/StoryTime'));
+const ColoringCanvas = lazy(() => import('./components/ColoringCanvas'));
+const Leaderboard = lazy(() => import('./components/Leaderboard').then((module) => ({ default: module.Leaderboard })));
 import { MascotProvider, useMascot } from './context/MascotContext';
 import { THEMED_WORLDS, ThemedWorld, INITIAL_WORDS } from './constants';
 import { db, auth } from './lib/firebase';
 import { doc, getDoc, setDoc, increment, collection, getDocs } from 'firebase/firestore';
 import { onAuthStateChanged, signInAnonymously, User } from 'firebase/auth';
 import { soundFx } from './utils/audio';
+import { AudioManager, type AudioPreferences } from './services/AudioManager';
 import { fireTreasureChestConfetti } from './utils/confetti';
 import { StorageService } from './services/StorageService';
 import { AssetCacheService } from './services/AssetCacheService';
@@ -30,7 +31,12 @@ import { OrientationLockGuard } from './components/OrientationLockGuard';
 import { AnalyticsService } from './services/AnalyticsService';
 import { useNotifications } from './context/NotificationContext';
 import { StartupLoader } from './components/StartupLoader';
-import { ExplorerButton, IconBadge } from './components/UiCore';
+
+const LEARNING_TABS: readonly LearningTab[] = ['adventure', 'worlds', 'story', 'draw', 'stickers', 'quests', 'friends', 'leaderboard'];
+
+function isLearningTab(value: unknown): value is LearningTab {
+  return typeof value === 'string' && LEARNING_TABS.includes(value as LearningTab);
+}
 
 interface UserStats {
   stars: number;
@@ -49,7 +55,7 @@ function AppMainContent() {
   const [isAppReady, setIsAppReady] = useState(false);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [showDashboard, setShowDashboard] = useState(false);
-  const [activeNavTab, setActiveNavTab] = useState<'adventure' | 'worlds' | 'story' | 'draw' | 'stickers' | 'quests' | 'friends' | 'leaderboard' | 'dictionary'>('adventure');
+  const [activeNavTab, setActiveNavTab] = useState<LearningTab>('adventure');
   const [dailyBonusAvailable, setDailyBonusAvailable] = useState(false);
   const [currentWorld, setCurrentWorld] = useState<ThemedWorld>(THEMED_WORLDS[0]);
   const [activeWordIndex, setActiveWordIndex] = useState(0);
@@ -60,16 +66,29 @@ function AppMainContent() {
     return [];
   });
 
-  const [soundEnabled, setSoundEnabled] = useState(() => {
-    const saved = StorageService.getItemSync('sound_enabled');
-    const isEnabled = saved !== null ? saved === 'true' : true;
-    soundFx.setSoundEnabled(isEnabled);
-    return isEnabled;
-  });
+  const [soundEnabled, setSoundEnabled] = useState(() => !AudioManager.isMuted());
+  const [audioPreferences, setAudioPreferences] = useState<AudioPreferences>(() => AudioManager.getPreferences());
 
   const [syncStatus, setSyncStatus] = useState<SyncWorkerStatus>(() => SyncWorkerService.getStatus());
   const prevSyncingRef = useRef(syncStatus.isSyncing);
   const prevLastSyncedRef = useRef(syncStatus.lastSyncedAt);
+
+  useEffect(() => {
+    const unsubscribeAudio = AudioManager.subscribe((preferences) => {
+      setSoundEnabled(!preferences.muted);
+      setAudioPreferences(preferences);
+    });
+    return unsubscribeAudio;
+  }, []);
+
+  const updateAudioPreferences = (patch: Partial<AudioPreferences>) => AudioManager.updatePreferences(patch);
+
+  useEffect(() => {
+    AudioManager.setScene(
+      activeNavTab === 'story' ? 'story' : activeNavTab === 'worlds' ? 'world' : activeNavTab === 'adventure' || activeNavTab === 'quests' ? 'game' : 'learn',
+      currentWorld.id,
+    );
+  }, [activeNavTab, currentWorld.id]);
 
   useEffect(() => {
     const unsubscribeSync = SyncWorkerService.subscribeStatus((status) => {
@@ -131,7 +150,7 @@ function AppMainContent() {
     };
   });
 
-  const persistCheckpoint = (updates: { currentWorldId?: string; activeWordIndex?: number; activeNavTab?: string; soundEnabled?: boolean }) => {
+  const persistCheckpoint = (updates: { currentWorldId?: string; activeWordIndex?: number; activeNavTab?: LearningTab; soundEnabled?: boolean }) => {
     if (updates.currentWorldId) StorageService.setItem('local_current_world_id', updates.currentWorldId);
     if (typeof updates.activeWordIndex === 'number') StorageService.setItem('local_active_word_index', String(updates.activeWordIndex));
     if (updates.activeNavTab) StorageService.setItem('local_active_nav_tab', updates.activeNavTab);
@@ -157,8 +176,8 @@ function AppMainContent() {
 
   const toggleSound = () => {
     const nextVal = !soundEnabled;
+    AudioManager.setMuted(!nextVal);
     setSoundEnabled(nextVal);
-    soundFx.setSoundEnabled(nextVal);
     soundFx.playPop();
     persistCheckpoint({ soundEnabled: nextVal });
     AnalyticsService.logLearningEvent('world_changed', { sound_enabled: nextVal });
@@ -187,8 +206,8 @@ function AppMainContent() {
     }
 
     const savedNavTab = StorageService.getItemSync('local_active_nav_tab');
-    if (savedNavTab) {
-      setActiveNavTab(savedNavTab as any);
+    if (isLearningTab(savedNavTab)) {
+      setActiveNavTab(savedNavTab);
     }
   }, [currentUser]);
 
@@ -339,13 +358,13 @@ function AppMainContent() {
           setActiveWordIndex(data.activeWordIndex);
         }
 
-        if (data.activeNavTab) {
+        if (isLearningTab(data.activeNavTab)) {
           setActiveNavTab(data.activeNavTab);
         }
 
         if (typeof data.soundEnabled === 'boolean') {
+          AudioManager.setMuted(!data.soundEnabled);
           setSoundEnabled(data.soundEnabled);
-          StorageService.setItem('sound_enabled', String(data.soundEnabled));
         }
 
         setStats((prev) => ({
@@ -369,7 +388,7 @@ function AppMainContent() {
           claimedQuests: mergedQuests,
           currentWorldId: data.currentWorldId || currentWorld.id,
           activeWordIndex: typeof data.activeWordIndex === 'number' ? data.activeWordIndex : activeWordIndex,
-          activeNavTab: data.activeNavTab || activeNavTab,
+          activeNavTab: isLearningTab(data.activeNavTab) ? data.activeNavTab : activeNavTab,
           soundEnabled: typeof data.soundEnabled === 'boolean' ? data.soundEnabled : soundEnabled
         }, { merge: true });
       }
@@ -548,158 +567,77 @@ function AppMainContent() {
         {!isAppReady && <StartupLoader onComplete={() => setIsAppReady(true)} />}
       </AnimatePresence>
 
-      <div className="min-h-screen font-sans text-stone-800 selection:bg-amber-100 flex flex-col justify-between relative overflow-x-hidden">
+      <div className="min-h-[100dvh] flex flex-col relative overflow-x-hidden bg-[#f6f8f7] text-stone-800">
         
-        {/* Interactive Storybook Canvas Background */}
-        <InteractiveBackground world={currentWorld} soundEnabled={soundEnabled} />
-
-        {/* Floating Animated Mascot Component with Thought Bubble Context */}
+        {/* Mascot encouragement remains part of the learning experience. */}
         <FloatingMascot soundEnabled={soundEnabled} />
 
-      {/* Playful Top Header */}
-      <header className="h-20 w-full px-4 md:px-8 flex items-center justify-between bg-white/90 backdrop-blur-md border-b-4 border-amber-200/50 sticky top-0 z-40 shadow-sm">
-        <div className="flex items-center gap-4">
-          <IconBadge icon={currentWorld.emoji} size="md" color="bg-gradient-to-tr from-amber-400 to-yellow-400 border-amber-600 text-white" />
-          <div className="flex flex-col">
-            <span className="text-[10px] font-black text-amber-700 uppercase tracking-[0.2em] leading-tight">World Explorer</span>
-            <span className="text-xl font-black text-stone-900 tracking-tight leading-none">English Explorer</span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <ExplorerButton
-            variant="glass"
-            size="icon"
+      <header className="learn-app-header">
+        <a
+          className="learn-brand"
+          href="#learn-home"
+          onClick={(event) => { event.preventDefault(); setActiveNavTab('adventure'); }}
+          aria-label="LEARN home"
+        >
+          <span className="learn-brand-mark" aria-hidden="true">LE</span>
+          <span>
+            <span className="learn-brand-title">LEARN</span>
+            <span className="learn-brand-subtitle">English Explorer</span>
+          </span>
+        </a>
+        <div className="learn-header-actions">
+          <span className="hidden text-xs font-medium text-stone-500 sm:inline-flex sm:items-center sm:gap-2" role="status" aria-live="polite">
+            <span className={`inline-block h-2 w-2 rounded-full ${syncStatus.isOnline ? 'bg-emerald-500' : 'bg-orange-400'}`} />
+            {!syncStatus.isOnline ? 'Offline · saved on this device' : syncStatus.pendingCount > 0 ? 'Syncing progress' : 'Progress saved'}
+          </span>
+          <button
+            type="button"
+            className="learn-header-button"
             onClick={toggleSound}
-            title={soundEnabled ? "Mute Audio" : "Enable Audio"}
+            aria-pressed={soundEnabled}
+            aria-label={soundEnabled ? 'Turn sound off' : 'Turn sound on'}
+            title={soundEnabled ? 'Turn sound off' : 'Turn sound on'}
           >
-            {soundEnabled ? (
-              <Volume2 className="w-5 h-5" />
-            ) : (
-              <VolumeX className="w-5 h-5 text-stone-400" />
-            )}
-          </ExplorerButton>
+            {soundEnabled ? <Volume2 aria-hidden="true" size={18} /> : <VolumeX aria-hidden="true" size={18} />}
+            <span className="hidden sm:inline">{soundEnabled ? 'Sound on' : 'Sound off'}</span>
+          </button>
+          <button type="button" className="learn-header-button" onClick={() => setShowDashboard(true)}>
+            <ShieldCheck aria-hidden="true" size={18} />
+            <span className="hidden sm:inline">For parents</span>
+          </button>
         </div>
       </header>
 
-      {/* Main Content Area */}
-      <main className="max-w-3xl mx-auto p-4 md:pt-8 w-full flex-1 relative z-10">
-        
-        {/* Child Mode Primary Navigation Bar */}
-        <div className="flex bg-white/95 backdrop-blur-md p-2 rounded-[32px] border-4 border-amber-100 shadow-soft-3d mb-8 gap-2 overflow-x-auto no-scrollbar">
-          <button
-            onClick={() => {
-              soundFx.playNav();
-              setActiveNavTab('adventure');
-              persistCheckpoint({ activeNavTab: 'adventure' });
-            }}
-            className={`flex-1 min-w-[80px] py-3 px-4 rounded-2xl font-black text-xs uppercase tracking-wider flex flex-col md:flex-row items-center justify-center gap-2 transition-all whitespace-nowrap ${
-              activeNavTab === 'adventure'
-                ? 'bg-gradient-to-b from-amber-300 to-yellow-500 text-amber-950 border-b-4 border-amber-600 shadow-md scale-105'
-                : 'text-stone-500 hover:text-stone-800 hover:bg-amber-50'
-            }`}
-          >
-            <Compass className="w-5 h-5" />
-            <span>Play</span>
-          </button>
-
-          <button
-            onClick={() => {
-              soundFx.playNav();
-              setActiveNavTab('worlds');
-              persistCheckpoint({ activeNavTab: 'worlds' });
-            }}
-            className={`flex-1 min-w-[80px] py-3 px-4 rounded-2xl font-black text-xs uppercase tracking-wider flex flex-col md:flex-row items-center justify-center gap-2 transition-all whitespace-nowrap ${
-              activeNavTab === 'worlds'
-                ? 'bg-gradient-to-b from-amber-300 to-yellow-500 text-amber-950 border-b-4 border-amber-600 shadow-md scale-105'
-                : 'text-stone-500 hover:text-stone-800 hover:bg-amber-50'
-            }`}
-          >
-            <span className="text-xl">🌎</span>
-            <span>Realms</span>
-          </button>
-
-          <button
-            onClick={() => {
-              soundFx.playNav();
-              setActiveNavTab('story');
-              persistCheckpoint({ activeNavTab: 'story' });
-            }}
-            className={`flex-1 min-w-[80px] py-3 px-4 rounded-2xl font-black text-xs uppercase tracking-wider flex flex-col md:flex-row items-center justify-center gap-2 transition-all whitespace-nowrap ${
-              activeNavTab === 'story'
-                ? 'bg-gradient-to-b from-amber-300 to-yellow-500 text-amber-950 border-b-4 border-amber-600 shadow-md scale-105'
-                : 'text-stone-500 hover:text-stone-800 hover:bg-amber-50'
-            }`}
-          >
-            <BookOpen className="w-5 h-5 text-purple-600" />
-            <span>Story</span>
-          </button>
-
-          <button
-            onClick={() => {
-              soundFx.playNav();
-              setActiveNavTab('draw');
-              persistCheckpoint({ activeNavTab: 'draw' });
-            }}
-            className={`flex-1 min-w-[80px] py-3 px-4 rounded-2xl font-black text-xs uppercase tracking-wider flex flex-col md:flex-row items-center justify-center gap-2 transition-all whitespace-nowrap ${
-              activeNavTab === 'draw'
-                ? 'bg-gradient-to-b from-amber-300 to-yellow-500 text-amber-950 border-b-4 border-amber-600 shadow-md scale-105'
-                : 'text-stone-500 hover:text-stone-800 hover:bg-amber-50'
-            }`}
-          >
-            <Palette className="w-5 h-5 text-rose-500" />
-            <span>Draw</span>
-          </button>
-
-          <button
-            onClick={() => {
-              soundFx.playNav();
-              setActiveNavTab('quests');
-              persistCheckpoint({ activeNavTab: 'quests' });
-            }}
-            className={`flex-1 min-w-[80px] py-3 px-4 rounded-2xl font-black text-xs uppercase tracking-wider flex flex-col md:flex-row items-center justify-center gap-2 transition-all whitespace-nowrap ${
-              activeNavTab === 'quests'
-                ? 'bg-gradient-to-b from-amber-300 to-yellow-500 text-amber-950 border-b-4 border-amber-600 shadow-md scale-105'
-                : 'text-stone-500 hover:text-stone-800 hover:bg-amber-50'
-            }`}
-          >
-            <Zap className="w-5 h-5 text-orange-500" />
-            <span>Quests</span>
-          </button>
-
-          <button
-            onClick={() => {
-              soundFx.playNav();
-              setActiveNavTab('leaderboard');
-              persistCheckpoint({ activeNavTab: 'leaderboard' });
-            }}
-            className={`flex-1 min-w-[80px] py-3 px-4 rounded-2xl font-black text-xs uppercase tracking-wider flex flex-col md:flex-row items-center justify-center gap-2 transition-all whitespace-nowrap ${
-              activeNavTab === 'leaderboard'
-                ? 'bg-gradient-to-b from-amber-300 to-yellow-500 text-amber-950 border-b-4 border-amber-600 shadow-md scale-105'
-                : 'text-stone-500 hover:text-stone-800 hover:bg-amber-50'
-            }`}
-          >
-            <Trophy className="w-5 h-5 text-yellow-600" />
-            <span>Ranks</span>
-          </button>
-
-          <button
-            onClick={() => {
-              soundFx.playNav();
-              setShowDashboard(true);
-            }}
-            className="flex-1 min-w-[80px] py-3 px-4 rounded-2xl font-black text-xs uppercase tracking-wider flex flex-col md:flex-row items-center justify-center gap-2 transition-all text-stone-500 hover:text-stone-800 hover:bg-amber-50 whitespace-nowrap"
-            title="Parent Dashboard"
-          >
-            <ShieldCheck className="w-5 h-5 text-amber-700" />
-            <span>Parents</span>
-          </button>
-        </div>
+      <div className="mx-auto flex w-full max-w-[1440px] flex-1 items-start gap-6 px-4 pb-28 pt-5 sm:px-6 lg:gap-8 lg:px-8 lg:pb-10 lg:pt-8">
+        <MainNavigation
+          activeTab={activeNavTab}
+          onNavigate={(tab) => {
+            soundFx.playNav();
+            setActiveNavTab(tab);
+            persistCheckpoint({ activeNavTab: tab });
+          }}
+          onOpenParents={() => setShowDashboard(true)}
+        />
+        <main className="min-w-0 flex-1">
+          {activeNavTab === 'adventure' && (
+            <LearningHome
+              world={currentWorld}
+              stars={stats.stars}
+              wordsLearned={stats.wordsLearned}
+              streak={stats.streak}
+              onExploreWorlds={() => {
+                setActiveNavTab('worlds');
+                persistCheckpoint({ activeNavTab: 'worlds' });
+              }}
+            />
+          )}
 
         {/* Dynamic Tab Views */}
+        <Suspense fallback={<div className="rounded-3xl bg-white/80 p-8 text-center text-sm font-semibold text-stone-500" role="status" aria-live="polite">Loading your activity…</div>}>
         <AnimatePresence mode="wait">
           {activeNavTab === 'adventure' && (
             <motion.div
+              id="word-game"
               key="adventure-tab"
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
@@ -747,7 +685,7 @@ function AppMainContent() {
             >
               <WorldSelector
                 currentWorld={currentWorld}
-                userXp={userXp}
+                userXp={stats.stars}
                 onSelectWorld={(world) => {
                   setCurrentWorld(world);
                   setActiveWordIndex(0);
@@ -801,7 +739,7 @@ function AppMainContent() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -12 }}
             >
-              <StickerAlbum userXp={userXp} soundEnabled={soundEnabled} />
+              <StickerAlbum userXp={stats.stars} soundEnabled={soundEnabled} />
             </motion.div>
           )}
 
@@ -831,10 +769,7 @@ function AppMainContent() {
             >
               <Leaderboard
                 userStars={stats.stars}
-                userCoins={stats.coins}
                 userStreak={stats.streak}
-                soundEnabled={soundEnabled}
-                currentUserId={currentUser?.uid}
               />
             </motion.div>
           )}
@@ -855,28 +790,30 @@ function AppMainContent() {
             </motion.div>
           )}
         </AnimatePresence>
+        </Suspense>
       </main>
+      </div>
 
       {/* Parent Dashboard Modal */}
+      <Suspense fallback={null}>
       <AnimatePresence>
         {showDashboard && (
           <ParentDashboard 
             stats={stats} 
             onClose={() => setShowDashboard(false)} 
             onUnlockCharacter={handleUnlockCharacter}
+            soundEnabled={soundEnabled}
+            onToggleSound={toggleSound}
+            audioPreferences={audioPreferences}
+            onAudioPreferencesChange={updateAudioPreferences}
           />
         )}
       </AnimatePresence>
+      </Suspense>
 
-        <footer className="py-8 px-6 text-center bg-white/90 border-t-2 border-stone-200/80 mt-12 relative z-10">
-          <p className="text-[10px] font-black text-stone-400 uppercase tracking-[0.2em] mb-2">English Explorer • Built with ❤️ for Little Learners</p>
-          <div className="flex justify-center gap-4 text-stone-300 text-sm">
-            <span>🌻</span>
-            <span>🐠</span>
-            <span>🚀</span>
-            <span>🌴</span>
-            <span>🏰</span>
-          </div>
+        <footer className="relative z-10 mt-auto border-t border-[#e5ebe8] bg-white/65 px-6 py-5 text-center">
+          <p className="m-0 text-xs font-medium text-stone-500">LEARN · English Explorer</p>
+          <p className="mb-0 mt-1 text-[11px] text-stone-400">Curious minds grow one word at a time.</p>
         </footer>
       </div>
     </AmbientEnvironment>
@@ -886,9 +823,11 @@ function AppMainContent() {
 export default function App() {
   return (
     <MascotProvider>
-      <OrientationLockGuard>
-        <AppMainContent />
-      </OrientationLockGuard>
+      <MotionConfig reducedMotion="user">
+        <OrientationLockGuard>
+          <AppMainContent />
+        </OrientationLockGuard>
+      </MotionConfig>
     </MascotProvider>
   );
 }
